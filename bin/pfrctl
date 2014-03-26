@@ -1,0 +1,135 @@
+#!/bin/sh
+
+min_num_slots=4096
+enable_tx=1
+nic_driver=
+enable_dnacluster=0
+dnacluster_nics=
+dna_cluster_id=10
+dna_hash_mode=2
+
+
+if [ "$UID" -ne 0 ]; then
+    echo "You must be supervisor to run this."
+    exit 1
+fi
+
+if [ -z "$PFRING_HOME" ]; then
+    echo "No PFRING_HOME set, script exited."
+    exit 1
+fi
+
+if [ -f "$PFRING_HOME/etc/pfring.conf" ]; then
+    . $PFRING_HOME/etc/pfring.conf
+fi
+
+setup_nics () {
+    eths=`lspci | grep "Ethernet controller" | awk -F" " '{print $1;}'`
+    for ethID in $eths
+    do
+        drvname=`find /sys | grep -i drivers.*$ethID | awk -F"/" '{print $6;}'`
+        nic_name=`ls /sys/bus/pci/drivers/$drvname/*:$ethID*/net/`
+        if [ -n "$nic_name" -a "$drvname" == $1 ]; then
+            echo "Setup $nic_name $2"
+            ifconfig $nic_name $2
+            :
+        fi
+    done
+}
+
+
+stop_pfring() {
+    if [ -f "/tmp/pfring.tmp" ]; then
+        . /tmp/pfring.tmp
+        if [ -n "$PFR_DRIVER" ]; then
+            echo "Recovery $PFR_DRIVER"
+            if ( rmmod $PFR_DRIVER )>/dev/null 2>&1; then
+                modprobe $PFR_DRIVER
+                setup_nics $PFR_DRIVER up
+            fi
+        fi
+
+        rm -rf /tmp/pfring.tmp
+    fi
+
+    rmmod pf_ring>/dev/null 2>&1
+    killall -9 pfdnacluster_master>/dev/null 2>&1
+}
+
+start_pfring() {
+    if [ -f "/tmp/pfring.tmp" ]; then
+        echo "PFRing is already running."
+        exit 1
+    fi
+
+    rmmod pf_ring > /dev/null 2>&1
+    if ! ( insmod $PFRING_HOME/drivers/pf_ring.ko \
+                  min_num_slots=$min_num_slots \
+                  enable_tx_capture=$enable_tx \
+                  transparent_mode=0 )>/dev/null 2>&1; then
+        echo "Can't install pf_ring.ko, please check configurations you set"
+        exit 1
+    fi
+
+    if [ -n "$nic_driver" ]; then
+        drv_type=`echo $nic_driver | awk -F"." '{print $1;}'`
+        drv_name=`echo $nic_driver | awk -F"." '{print $2;}'`
+        if [ "$drv_type" != "DNA" -a \
+            "$drv_type" != "AWARE" ]; then
+            echo "You do not have a valid driver name."
+            exit 1
+        fi
+    fi
+    
+    if [ "$drv_type" == "DNA" ]; then
+        rmmod $drv_name > /dev/null 2>&1
+        if ! ( insmod $PFRING_HOME/drivers/DNA/$drv_name.ko $driver_options ); then
+            echo "Can not install DNA driver $drv_name, please check the configurations you set."
+            exit 1
+        fi
+
+        setup_nics $drv_name "up promisc"
+
+        if [ "$enable_dnacluster" -ne 0 ]; then
+            pfdnacluster_master -i $dnacluster_nics \
+                                -c $dna_cluster_id \
+                                -n $num_dna_apps \
+                                -m $dna_hash_mode&
+
+            if [ $? -ne 0 ]; then
+                echo "Startup pfdnacluster_master failed, please do it manually"
+            fi
+        fi
+    elif [ "$drv_type" == "AWARE" ]; then
+        if ! ( insmod $PFRING_HOME/drivers/AWARE/$drv_name $driver_options ); then
+            echo "Can't install AWARE driver $drv_name, please check the configurations you set."
+            exit 1
+        fi
+
+        setup_nics $drv_name "up promisc"
+    fi
+
+    echo "PFR_DRIVER=$drv_name" > /tmp/pfring.tmp
+}
+
+
+
+case $1 in
+"start")
+    start_pfring
+    break
+    ;;
+"stop")
+    stop_pfring
+    break
+    ;;
+"restart")
+    stop_pfring
+    start_pfring
+    ;;
+*)
+    echo "$0 stop | start"
+    exit 1
+esac
+
+exit 0
