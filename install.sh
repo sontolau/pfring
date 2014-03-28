@@ -3,6 +3,7 @@
 INST_DIR=$1/pfring
 
 if [ "$UID" -ne 0 ]; then
+    echo "Please run it with root."
     exit 1
 fi
 
@@ -23,9 +24,6 @@ rm -rf src
 install -m 0755 bin/* $1/pfring/bin
 
 cp -rf etc $1/pfring/etc > /dev/null 2>&1
-
-export PFRING_HOME=$1/pfring
-export PATH=$PATH:$PFRING_HOME/bin
 
 sed -i '/PFRING/d' $HOME/.bashrc
 

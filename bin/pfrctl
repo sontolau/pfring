@@ -62,15 +62,17 @@ start_pfring() {
         exit 1
     fi
 
-    rmmod pf_ring > /dev/null 2>&1
-    if ! ( insmod $PFRING_HOME/drivers/pf_ring.ko \
+    pfmod=`lsmod | grep "pf_ring"`
+
+    if [ -z "$pfmod" ]; then
+        if ! ( insmod $PFRING_HOME/drivers/pf_ring.ko \
                   min_num_slots=$min_num_slots \
                   enable_tx_capture=$enable_tx \
                   transparent_mode=0 )>/dev/null 2>&1; then
-        echo "Can't install pf_ring.ko, please check configurations you set"
-        exit 1
+            echo "Can't install pf_ring.ko, please check configurations you set"
+            exit 1
+        fi
     fi
-
     if [ -n "$nic_driver" ]; then
         drv_type=`echo $nic_driver | awk -F"." '{print $1;}'`
         drv_name=`echo $nic_driver | awk -F"." '{print $2;}'`
@@ -94,7 +96,7 @@ start_pfring() {
             pfdnacluster_master -i $dnacluster_nics \
                                 -c $dna_cluster_id \
                                 -n $num_dna_apps \
-                                -m $dna_hash_mode&
+                                -m $dna_hash_mode > /dev/null 2>&1&
 
             if [ $? -ne 0 ]; then
                 echo "Startup pfdnacluster_master failed, please do it manually"
